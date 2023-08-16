@@ -1,0 +1,157 @@
+---
+title: "UpdateFlights"
+author: "Brittani Wilson"
+date: "4/26/2020"
+runtime: shiny
+output: html_document
+ 
+
+---
+
+```{r echo = FALSE}
+
+require(h2oEnsemble)
+require(h2o)
+require(rio)
+require(doParallel)
+require(viridis)
+require(RColorBrewer)
+require(ggthemes)
+require(plotly)
+require(lime)
+require(plotROC)
+require(pROC)
+require(bit64)
+require(dplyr)
+#require(shiny)
+require(readr)
+
+delay<-read_csv("C:/Users/12488/Documents/R/Delays/Data/delayed.csv")
+#, sep=",", header=TRUE, stringsAsFactors = TRUE)
+
+
+# earlier departures have negative departure times.  https://www.transtats.bts.gov/DL_SelectFields.asp?Table_ID=236
+# Cancelled Flight Indicator (1=Yes), Diverted Flight Indicator (1=Yes)
+```
+
+```{r}
+delay$X<-NULL
+
+delay$DAY_OF_WEEK<-NULL
+
+delay$DAY_OF_MONTH <- as.factor(delay$DAY_OF_MONTH)
+str(delay)
+
+delay2<-na.omit(delay)
+str(delay2)
+```
+
+
+```{r}
+
+delay3<-as.data.frame(delay2)
+
+delay4<-sample_n(delay3, 100000)
+
+delay5<-na.omit(delay4)
+
+str(delay5)
+
+delay6<-delay5%>%select(-ARR_DEL15, ARR_DEL15)
+#delay6= delay6[, 1:8]
+str(delay6)
+
+
+```
+
+
+```{r echo = FALSE}
+
+selectInput("n_breaks", label = "Number of bins:",
+              choices = c(10, 20, 35, 50), selected = 20)
+
+sliderInput("bw_adjust", label = "Bandwidth adjustment:",
+              min = 0.2, max = 2, value = 1, step = 0.2)
+
+renderPlot({
+  hist(delay6$ARR_DEL15, probability = TRUE,
+       breaks = as.numeric(input$n_breaks),
+       xlab = "Arrival Delay (15 minutes)",
+       main = "Arrival Delay for Flights")
+
+  dens <- density(delay6$ARR_DEL15, adjust = input$bw_adjust)
+  lines(dens, col = "blue")
+})
+```
+
+```{r}
+h2o.init(nthreads = -1, port = 54321, max_mem_size = "4g")
+
+```
+
+
+
+
+```{r}
+h2o.removeAll()
+h2o.no_progress()
+
+set.seed(55)
+
+
+delay_h2o <- as.h2o(delay6)
+
+# setting response and predictors
+y <- "ARR_DEL15"
+x <- setdiff(names(delay_h2o), y)
+
+# response needs to be converted to factor for classification problem
+delay_h2o[, y] <- as.factor(delay_h2o[, y])
+
+
+split_df <- h2o.splitFrame(data = delay_h2o, ratios = c(0.7, 0.15), seed = 55)  
+
+# train and test datasets
+h2o_train <- split_df[[1]]  
+h2o_valid <- split_df[[2]]
+h2o_test <- split_df[[3]]
+
+
+
+
+
+```
+
+
+
+
+```{r}
+automl_model <- h2o.automl(x = x, 
+                           y = y,
+                           training_frame = h2o_train,
+                           leaderboard_frame = h2o_test,
+                           validation_frame = h2o_valid,
+                           max_runtime_secs = 300,
+                           seed = 55)
+
+```
+
+
+
+```{r}
+require(tidyverse)
+
+lb=automl_model@leaderboard
+print(lb, n = nrow(lb))
+
+
+```
+
+```{r}
+
+h2o.performance(model = automl_model@leader,
+                            newdata = h2o_test)
+
+``` 
+
+
